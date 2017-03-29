@@ -13,11 +13,13 @@ def resize_mscoco():
     '''
 
     # PATH need to be fixed
-    data_path="/Users/Adrien/Repositories/IFT6266h17/inpainting/val2014"
-    save_dir = "/Users/Adrien/Repositories/IFT6266h17/64_64/val2014/"
+    data_path="/Users/Adrien/Repositories/IFT6266h17/inpainting/train2014"
+    save_dir = "/Users/Adrien/Repositories/IFT6266h17/dataset/train/input/"
+    save_dir2 = "/Users/Adrien/Repositories/IFT6266h17/dataset/train/target/"
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
+        os.makedirs(save_dir2)
 
     preserve_ratio = True
     image_size = (64, 64)
@@ -30,28 +32,27 @@ def resize_mscoco():
         img = Image.open(img_path)
         print i, len(imgs), img_path
 
-        if img.size[0] != image_size[0] or img.size[1] != image_size[1]:
-            if not preserve_ratio:
-                img = img.resize((image_size), Image.ANTIALIAS)
-            else:
-                # Resize based on the smallest dimension
-                scale = image_size[0] / float(np.min(img.size))
-                new_size = (int(np.floor(scale * img.size[0]))+1, int(np.floor(scale * img.size[1])+1))
-                img = img.resize((new_size), Image.ANTIALIAS)
+        img_array = np.array(img)
 
-                # Crop the 64/64 center
-                tocrop = np.array(img)
-                center = (int(np.floor(tocrop.shape[0] / 2.)), int(np.floor(tocrop.shape[1] / 2.)))
-                print tocrop.shape, center, (center[0]-32,center[0]+32), (center[1]-32,center[1]+32)
-                if len(tocrop.shape) == 3:
-                    tocrop = tocrop[center[0]-32:center[0]+32, center[1] - 32:center[1]+32, :]
-                else:
-                    tocrop = tocrop[center[0]-32:center[0]+32, center[1] - 32:center[1]+32]
-                img = Image.fromarray(tocrop)
+        #cap_id = os.path.basename(img_path)[:-4]
 
-        img.save(save_dir + os.path.basename(img_path))
+        # Get input/target from the images
+        center = (int(np.floor(img_array.shape[0] / 2.)), int(np.floor(img_array.shape[1] / 2.)))
+        if len(img_array.shape) == 3:
+            input = np.copy(img_array)
+            input[center[0]-16:center[0]+16, center[1]-16:center[1]+16, :] = 0
+            target = img_array[center[0]-16:center[0]+16, center[1] - 16:center[1]+16, :]
+        else:
+            continue
+            input = np.copy(img_array)
+            input[center[0]-16:center[0]+16, center[1]-16:center[1]+16] = 0
+            target = img_array[center[0]-16:center[0]+16, center[1] - 16:center[1]+16]
+        
 
-
+        input = Image.fromarray(input)
+        target = Image.fromarray(target)
+        input.save(save_dir + os.path.basename(img_path))
+        target.save(save_dir2 + os.path.basename(img_path))
 
 
 def show_examples(batch_idx, batch_size,

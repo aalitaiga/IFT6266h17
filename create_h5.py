@@ -8,7 +8,7 @@ import glob
 image_dim = 32
 size_train = 1281149
 size_val = 49999
-path_train = '64_64/train2014'
+path_train = 'dataset/train'
 path_val = '64_64/val2014'
 BATCH = 5000
 d = {
@@ -21,9 +21,11 @@ image_features = f.create_dataset('features', (size_train+size_val, 3, image_dim
 split_dict = {
     'train': {
         'features': (0, size_train),
+        'target': ()
     },
     'valid': {
         'features': (size_train, size_train+size_val),
+        'target': ()
     }
 }
 
