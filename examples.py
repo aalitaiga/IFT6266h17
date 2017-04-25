@@ -1,4 +1,4 @@
-eimport os
+import os
 import glob
 import cPickle as pkl
 import numpy as np
@@ -13,9 +13,9 @@ def resize_mscoco():
     '''
 
     # PATH need to be fixed
-    data_path="/Users/Adrien/Repositories/IFT6266h17/inpainting/val2014"
-    save_dir = "/Users/Adrien/Repositories/IFT6266h17/dataset/val/input/"
-    save_dir2 = "/Users/Adrien/Repositories/IFT6266h17/dataset/val/target/"
+    data_path="/Tmp/alitaiga/ift6266/train2014"
+    save_dir = "/Tmp/alitaiga/ift6266/processed/train/input/"
+    save_dir2 = "/Tmp/alitaiga/ift6266/processed/train/target/"
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -47,7 +47,7 @@ def resize_mscoco():
             input = np.copy(img_array)
             input[center[0]-16:center[0]+16, center[1]-16:center[1]+16] = 0
             target = img_array[center[0]-16:center[0]+16, center[1] - 16:center[1]+16]
-        
+
 
         input = Image.fromarray(input)
         target = Image.fromarray(target)
