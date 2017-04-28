@@ -11,26 +11,32 @@ import sys
 import time
 import json
 import argparse
+from datetime import date
 
 import numpy as np
 import tensorflow as tf
+from fuel.streams import DataStream
+from fuel.schemes import ShuffledScheme
+from fuel.datasets.hdf5 import H5PYDataset
 
 import pixel_cnn_pp.nn as nn
 import pixel_cnn_pp.plotting as plotting
 from pixel_cnn_pp.model import model_spec
-import data.cifar10_data as cifar10_data
-import data.imagenet_data as imagenet_data
+
+path = '/Tmp/alitaiga/ift6266/pixelcnn_{}'.format(date.today())
+if not os.path.exists(path):
+    os.makedirs(path)
 
 # -----------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 # data I/O
 parser.add_argument('-i', '--data_dir', type=str,
-                    default='/tmp/pxpp/data', help='Location for the dataset')
-parser.add_argument('-o', '--save_dir', type=str, default='/tmp/pxpp/save',
+                    default='/Tmp/alitaiga/ift6266/coco_cropped.h5', help='Location for the dataset')
+parser.add_argument('-o', '--save_dir', type=str, default=path,
                     help='Location for parameter checkpoints and samples')
 parser.add_argument('-d', '--data_set', type=str,
-                    default='cifar', help='Can be either cifar|imagenet')
-parser.add_argument('-t', '--save_interval', type=int, default=20,
+                    default='ms_coco', help='Can be either cifar|imagenet')
+parser.add_argument('-t', '--save_interval', type=int, default=10,
                     help='Every how many epochs to write checkpoint/samples?')
 parser.add_argument('-r', '--load_params', dest='load_params', action='store_true',
                     help='Restore training from previous model checkpoint?')
@@ -52,13 +58,13 @@ parser.add_argument('-e', '--lr_decay', type=float, default=0.999995,
                     help='Learning rate decay, applied every step of the optimization')
 parser.add_argument('-b', '--batch_size', type=int, default=12,
                     help='Batch size during training per GPU')
-parser.add_argument('-a', '--init_batch_size', type=int, default=100,
+parser.add_argument('-a', '--init_batch_size', type=int, default=50,
                     help='How much data to use for data-dependent initialization.')
 parser.add_argument('-p', '--dropout_p', type=float, default=0.5,
                     help='Dropout strength (i.e. 1 - keep_prob). 0 = No dropout, higher = more dropout.')
 parser.add_argument('-x', '--max_epochs', type=int,
                     default=5000, help='How many epochs to run in total?')
-parser.add_argument('-g', '--nr_gpu', type=int, default=8,
+parser.add_argument('-g', '--nr_gpu', type=int, default=1,
                     help='How many GPUs to distribute the training across?')
 # evaluation
 parser.add_argument('--polyak_decay', type=float, default=0.9995,
@@ -76,15 +82,20 @@ rng = np.random.RandomState(args.seed)
 tf.set_random_seed(args.seed)
 
 # initialize data loaders for train/test splits
-if args.data_set == 'imagenet' and args.class_conditional:
-    raise("We currently don't have labels for the small imagenet data set")
-DataLoader = {'cifar': cifar10_data.DataLoader,
-              'imagenet': imagenet_data.DataLoader}[args.data_set]
-train_data = DataLoader(args.data_dir, 'train', args.batch_size * args.nr_gpu,
-                        rng=rng, shuffle=True, return_labels=args.class_conditional)
-test_data = DataLoader(args.data_dir, 'test', args.batch_size *
-                       args.nr_gpu, shuffle=False, return_labels=args.class_conditional)
-obs_shape = train_data.get_observation_size()  # e.g. a tuple (32,32,3)
+dataset_train = H5PYDataset('/Tmp/alitaiga/ift6266/coco_cropped.h5', which_sets=('train',))
+dataset_test = H5PYDataset('/Tmp/alitaiga/ift6266/coco_cropped.h5', which_sets=('valid',))
+
+obs_shape = (32,32,3)  # train_data.get_epoch_iterator().next()[0].shape[1:]  # e.g. a tuple (32,32,3)
+train_stream = DataStream(
+    dataset_train,
+    iteration_scheme=ShuffledScheme(dataset_train.num_examples, args.batch_size * args.nr_gpu)
+)
+
+test_stream = DataStream(
+    dataset_test,
+    iteration_scheme=ShuffledScheme(dataset_test.num_examples, args.batch_size * args.nr_gpu)
+)
+
 assert len(obs_shape) == 3, 'assumed right now'
 
 # data place holders
@@ -94,17 +105,26 @@ xs = [tf.placeholder(tf.float32, shape=(args.batch_size, ) + obs_shape)
 
 # if the model is class-conditional we'll set up label placeholders +
 # one-hot encodings 'h' to condition on
-if args.class_conditional:
-    num_labels = train_data.get_num_labels()
-    y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
-    h_init = tf.one_hot(y_init, num_labels)
-    y_sample = np.split(
-        np.mod(np.arange(args.batch_size * args.nr_gpu), num_labels), args.nr_gpu)
-    h_sample = [tf.one_hot(tf.Variable(
-        y_sample[i], trainable=False), num_labels) for i in range(args.nr_gpu)]
-    ys = [tf.placeholder(tf.int32, shape=(args.batch_size,))
-          for i in range(args.nr_gpu)]
-    hs = [tf.one_hot(ys[i], num_labels) for i in range(args.nr_gpu)]
+if True: # args.class_conditional:
+    # num_labels = train_data.get_num_labels()
+    # y_init = tf.placeholder(tf.int32, shape=(args.init_batch_size,))
+    # h_init = tf.one_hot(y_init, num_labels)
+    # y_sample = np.split(
+    #     np.mod(np.arange(args.batch_size * args.nr_gpu), num_labels), args.nr_gpu)
+    # h_sample = [tf.one_hot(tf.Variable(
+    #     y_sample[i], trainable=False), num_labels) for i in range(args.nr_gpu)]
+    # ys = [tf.placeholder(tf.int32, shape=(args.batch_size,))
+    #       for i in range(args.nr_gpu)]
+    # hs = [tf.one_hot(ys[i], num_labels) for i in range(args.nr_gpu)]
+
+    h_init = tf.placeholder(tf.float32, shape=(args.init_batch_size,) + (64,64,3))
+    hs = [tf.placeholder(tf.float32, shape=(args.batch_size,) + (64,64,3))
+            for i in range(args.nr_gpu)]
+    h_tosample = next(test_stream.get_epoch_iterator())[0]
+    h_tosample = next(test_stream.get_epoch_iterator())[0]
+
+    h_tosample = h_tosample.reshape((-1,64,64,3))
+    h_tosample = np.cast[np.float32]((h_tosample - 127.5) / 127.5)
 else:
     h_init = None
     h_sample = [None] * args.nr_gpu
@@ -123,6 +143,7 @@ gen_par = model(x_init, h_init, init=True,
 all_params = tf.trainable_variables()
 ema = tf.train.ExponentialMovingAverage(decay=args.polyak_decay)
 maintain_averages_op = tf.group(ema.apply(all_params))
+to_restore = [par for par in all_params if 'conditional_weights' not in par.name]
 
 # get loss gradients over multiple GPUs
 grads = []
@@ -162,18 +183,20 @@ bits_per_dim_test = loss_gen_test[
 new_x_gen = []
 for i in range(args.nr_gpu):
     with tf.device('/gpu:%d' % i):
-        gen_par = model(xs[i], h_sample[i], ema=ema, dropout_p=0, **model_opt)
+        gen_par = model(xs[i], hs[i], ema=ema, dropout_p=0, **model_opt)
         new_x_gen.append(nn.sample_from_discretized_mix_logistic(
             gen_par, args.nr_logistic_mix))
 
 
-def sample_from_model(sess):
+def sample_from_model(sess,h_):
     x_gen = [np.zeros((args.batch_size,) + obs_shape, dtype=np.float32)
              for i in range(args.nr_gpu)]
+    dic = {hs[i]: h_[i] for i in range(args.nr_gpu)}
     for yi in range(obs_shape[0]):
         for xi in range(obs_shape[1]):
+            dic.update({xs[i]: x_gen[i] for i in range(args.nr_gpu)})
             new_x_gen_np = sess.run(
-                new_x_gen, {xs[i]: x_gen[i] for i in range(args.nr_gpu)})
+                new_x_gen, dic)
             for i in range(args.nr_gpu):
                 x_gen[i][:, yi, xi, :] = new_x_gen_np[i][:, yi, xi, :]
     return np.concatenate(x_gen, axis=0)
@@ -181,56 +204,66 @@ def sample_from_model(sess):
 # init & save
 initializer = tf.global_variables_initializer()
 saver = tf.train.Saver()
-
+to_res = tf.train.Saver(to_restore)
 # turn numpy inputs into feed_dict for use with tensorflow
 
 
 def make_feed_dict(data, init=False):
-    if type(data) is tuple:
-        x, y = data
-    else:
-        x = data
-        y = None
+    h, x = data
+
     # input to pixelCNN is scaled from uint8 [0,255] to float in range [-1,1]
     x = np.cast[np.float32]((x - 127.5) / 127.5)
+    h = np.cast[np.float32]((h - 127.5) / 127.5)
+    x = x.reshape((-1, 32, 32, 3))
+    h = h.reshape((-1, 64, 64, 3))
     if init:
         feed_dict = {x_init: x}
-        if y is not None:
-            feed_dict.update({y_init: y})
+        if h is not None:
+            feed_dict.update({h_init: h})
     else:
         x = np.split(x, args.nr_gpu)
         feed_dict = {xs[i]: x[i] for i in range(args.nr_gpu)}
-        if y is not None:
-            y = np.split(y, args.nr_gpu)
-            feed_dict.update({ys[i]: y[i] for i in range(args.nr_gpu)})
+        if h is not None:
+            h = np.split(h, args.nr_gpu)
+            feed_dict.update({hs[i]: h[i] for i in range(args.nr_gpu)})
     return feed_dict
 
 # //////////// perform training //////////////
 if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
-print('starting training')
 test_bpd = []
 lr = args.learning_rate
 with tf.Session() as sess:
     for epoch in range(args.max_epochs):
         begin = time.time()
+        train_data = train_stream.get_epoch_iterator()
 
         # init
         if epoch == 0:
             # manually retrieve exactly init_batch_size examples
+            stream = DataStream(
+                dataset_train,
+                iteration_scheme=ShuffledScheme(dataset_train.num_examples, args.init_batch_size)
+            ).get_epoch_iterator()
             feed_dict = make_feed_dict(
-                train_data.next(args.init_batch_size), init=True)
-            train_data.reset()  # rewind the iterator back to 0 to do one full epoch
+                next(stream), init=True)
+            # train_data = train_stream.get_epoch_iterator()  # rewind the iterator back to 0 to do one full epoch
             sess.run(initializer, feed_dict)
             print('initializing the model...')
-            if args.load_params:
-                ckpt_file = args.save_dir + '/params_' + args.data_set + '.ckpt'
+            if True: #args.load_params:
+                ckpt_file = '/Tmp/alitaiga/ift6266/pixelcnn_2017-04-13' + '/params_ift6266.ckpt'
+                # import ipdb; ipdb.set_trace()
                 print('restoring parameters from', ckpt_file)
+                # to_res.restore(sess, ckpt_file)
                 saver.restore(sess, ckpt_file)
+            print('starting training')
 
         # train for one epoch
         train_losses = []
-        for d in train_data:
+        for i, d in enumerate(train_data):
+            h, x = d
+            if x.shape != (args.batch_size,3,32,32):
+                continue
             feed_dict = make_feed_dict(d)
             # forward/backward/update model on each gpu
             lr *= args.lr_decay
@@ -241,7 +274,11 @@ with tf.Session() as sess:
 
         # compute likelihood over test data
         test_losses = []
+        test_data = test_stream.get_epoch_iterator()
         for d in test_data:
+            h, x = d
+            if x.shape != (args.batch_size,3,32,32):
+                continue
             feed_dict = make_feed_dict(d)
             l = sess.run(bits_per_dim_test, feed_dict)
             test_losses.append(l)
@@ -253,19 +290,25 @@ with tf.Session() as sess:
             epoch, time.time() - begin, train_loss_gen, test_loss_gen))
         sys.stdout.flush()
 
-        if epoch % args.save_interval == 0:
+        # save params
+        saver.save(sess, args.save_dir + '/params_' +
+                'ift6266.ckpt')
+        np.savez(args.save_dir + '/test_bpd_' + 'ift6266.npz', test_bpd=np.array(test_bpd))
+
+        if epoch % args.save_interval == 0 and epoch == 0:
+            print("Starting sampling")
+
 
             # generate samples from the model
-            sample_x = sample_from_model(sess)
-            img_tile = plotting.img_tile(sample_x[:int(np.floor(np.sqrt(
-                args.batch_size * args.nr_gpu))**2)], aspect_ratio=1.0, border_color=1.0, stretch=True)
-            img = plotting.plot_img(img_tile, title=args.data_set + ' samples')
-            plotting.plt.savefig(os.path.join(
-                args.save_dir, '%s_sample%d.png' % (args.data_set, epoch)))
-            plotting.plt.close('all')
+            center = (32, 32)
+            sample_x = sample_from_model(sess, [h_tosample])
+            images = h_tosample
+            images[:, center[0]-16:center[0]+16, center[1]-16:center[1]+16, :] = sample_x
 
-            # save params
-            saver.save(sess, args.save_dir + '/params_' +
-                       args.data_set + '.ckpt')
-            np.savez(args.save_dir + '/test_bpd_' + args.data_set +
-                     '.npz', test_bpd=np.array(test_bpd))
+            img_tile = plotting.img_tile(images[:int(np.floor(np.sqrt(
+                args.batch_size * args.nr_gpu))**2)], aspect_ratio=1.0, border_color=1.0, stretch=True)
+            img = plotting.plot_img(img_tile, title='Coco' + ' samples')
+            plotting.plt.savefig(os.path.join(
+                '/u/alitaiga/repositories/samples', '%s_sample%d.png' % (args.data_set, epoch)))
+            plotting.plt.close('all')
+            print("Sampling done")
